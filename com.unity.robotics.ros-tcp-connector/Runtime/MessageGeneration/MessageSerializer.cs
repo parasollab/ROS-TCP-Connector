@@ -57,12 +57,18 @@ namespace Unity.Robotics.ROSTCPConnector.MessageGeneration
         public void SerializeMessage(Message message)
         {
 #if ROS2
-            // insert the ros2 header
-            Write(k_Ros2Header);
+            // Insert the 4-byte ROS2 CDR header (Little-Endian flag + options)
+            Write(k_Ros2Header);  // (Added) ensure CDR encapsulation header 0x00_01_00_00 is present
 #endif
             m_LengthCorrection += m_AlignmentOffset;
-            m_AlignmentOffset = 0; // header doesn't affect alignment
+            m_AlignmentOffset = 0; // header doesn't affect alignment of subsequent data
             message.SerializeTo(this);
+
+#if ROS2
+            // If ROS2, ensure the message ends with 4 bytes of padding
+            m_ListOfSerializations.Add(k_PaddingBytes[4]);
+            m_AlignmentOffset += 4;
+#endif
         }
 
         public byte[] GetBytes()
@@ -114,7 +120,8 @@ namespace Unity.Robotics.ROSTCPConnector.MessageGeneration
 
         public void Write(bool value)
         {
-            m_ListOfSerializations.Add(BitConverter.GetBytes(value));
+            // Write boolean as a single byte (0 or 1):contentReference[oaicite:3]{index=3}
+            m_ListOfSerializations.Add(new byte[] { value ? (byte)1 : (byte)0 }); // (Changed) explicitly write 0x00 or 0x01
             m_AlignmentOffset += sizeof(bool);
         }
 
@@ -193,6 +200,12 @@ namespace Unity.Robotics.ROSTCPConnector.MessageGeneration
 
         public void Write<T>(T[] values) where T : Message
         {
+            if (values.Length == 0)
+                return; // (Added comment) No elements, skip alignment/padding for empty sequence (esp. if final field)
+#if ROS2
+            // Align array elements to 8-byte boundary (max alignment needed for ROS2 message elements)
+            Align(8);  // (Added) ensure proper alignment for first element of complex message
+#endif
             foreach (T entry in values)
             {
                 entry.SerializeTo(this);
@@ -202,10 +215,13 @@ namespace Unity.Robotics.ROSTCPConnector.MessageGeneration
         public void Write(bool[] values)
         {
             if (values.Length == 0)
-                return;
-
+                return; // (Added comment) Empty boolean array: length written separately, no content to align
+            // Copy bool array as bytes (each bool is one byte 0/1 in ROS2)
             byte[] buffer = new byte[values.Length];
-            Buffer.BlockCopy(values, 0, buffer, 0, buffer.Length);
+            for (int i = 0; i < values.Length; i++)
+            {
+                buffer[i] = values[i] ? (byte)1 : (byte)0;  // (Changed) ensure booleans are 0 or 1
+            }
             m_ListOfSerializations.Add(buffer);
             m_AlignmentOffset += values.Length;
         }
@@ -328,20 +344,18 @@ namespace Unity.Robotics.ROSTCPConnector.MessageGeneration
 
         public void Write(string inputString)
         {
-            byte[] encodedString = Encoding.UTF8.GetBytes(inputString);
-
+            byte[] encodedString = Encoding.UTF8.GetBytes(inputString ?? string.Empty);
 #if !ROS2
+            // (ROS1) 4-byte length + string bytes (no null terminator)
             m_ListOfSerializations.Add(BitConverter.GetBytes(encodedString.Length));
             m_ListOfSerializations.Add(encodedString);
-
             m_AlignmentOffset += 4 + encodedString.Length;
 #else
-            // ROS2 strings are 4-byte aligned, and padded with a null byte at the end
-            Align(sizeof(int));
+            // (ROS2) Align to 4-byte, then write length including null terminator, then string bytes + null
+            Align(sizeof(int));  // 4-byte alignment for string length
             m_ListOfSerializations.Add(BitConverter.GetBytes(encodedString.Length + 1));
             m_ListOfSerializations.Add(encodedString);
             m_ListOfSerializations.Add(k_NullByte);
-
             m_AlignmentOffset += 4 + encodedString.Length + 1;
 #endif
         }
