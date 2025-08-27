@@ -997,6 +997,11 @@ namespace Unity.Robotics.ROSTCPConnector
 
         public void Publish(string rosTopicName, Message message)
         {
+            Publish(rosTopicName, message, true);
+        }
+
+        public void Publish(string rosTopicName, Message message, bool useTrailingPad = true)
+        {
             if (rosTopicName.StartsWith("__"))
             {
                 QueueSysCommand(rosTopicName, message);
@@ -1009,7 +1014,7 @@ namespace Unity.Robotics.ROSTCPConnector
                     throw new Exception($"No registered publisher on topic {rosTopicName} for type {message.RosMessageName}!");
                 }
 
-                rosTopic.Publish(message);
+                rosTopic.Publish(message, useTrailingPad);
             }
         }
 

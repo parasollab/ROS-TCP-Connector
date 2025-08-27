@@ -210,9 +210,14 @@ namespace Unity.Robotics.ROSTCPConnector
 
         public void Publish(Message message)
         {
+            Publish(message, true);
+        }
+
+        public void Publish(Message message, bool useTrailingPad)
+        {
             m_LastMessageSentRealtime = ROSConnection.s_RealTimeSinceStartup;
             OnMessageSent(message);
-            m_MessageSender.Queue(message);
+            m_MessageSender.Queue(message, useTrailingPad);
             m_ConnectionInternal.AddSenderToQueue(m_MessageSender);
         }
 

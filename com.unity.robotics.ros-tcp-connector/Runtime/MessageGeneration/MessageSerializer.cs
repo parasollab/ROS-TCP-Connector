@@ -28,6 +28,9 @@ namespace Unity.Robotics.ROSTCPConnector.MessageGeneration
         int m_LengthCorrection; // alignment ignores the ros2 header etc, so add this to get actual length
         public int Length => m_AlignmentOffset + m_LengthCorrection;
         List<byte[]> m_ListOfSerializations = new List<byte[]>();
+        
+        // Add this flag; default true for legacy compatibility, set to false for CDR-minimal
+        public bool AddTrailingPad4 { get; set; } = true;
 
         public MessageSerializer()
         {
@@ -65,9 +68,12 @@ namespace Unity.Robotics.ROSTCPConnector.MessageGeneration
             message.SerializeTo(this);
 
 #if ROS2
-            // If ROS2, ensure the message ends with 4 bytes of padding
-            m_ListOfSerializations.Add(k_PaddingBytes[4]);
-            m_AlignmentOffset += 4;
+            if (AddTrailingPad4)
+            {
+                // Unconditional 4 bytes to match the "ROS" blob you posted
+                m_ListOfSerializations.Add(k_PaddingBytes[4]);
+                m_AlignmentOffset += 4;
+            }
 #endif
         }
 
@@ -195,17 +201,25 @@ namespace Unity.Robotics.ROSTCPConnector.MessageGeneration
 
         public void WriteLength<T>(T[] values)
         {
-            Write(values.Length);
+            // Write(values.Length);
+            // // sequence length is 4-byte aligned
+            // Align(sizeof(int));
+            // Write(values.Length);
+
+            // CDR: sequence length is 4-byte aligned and written once
+            Align(sizeof(int));
+            m_ListOfSerializations.Add(BitConverter.GetBytes(values.Length));
+            m_AlignmentOffset += sizeof(int);
         }
 
         public void Write<T>(T[] values) where T : Message
         {
             if (values.Length == 0)
                 return; // (Added comment) No elements, skip alignment/padding for empty sequence (esp. if final field)
-#if ROS2
-            // Align array elements to 8-byte boundary (max alignment needed for ROS2 message elements)
-            Align(8);  // (Added) ensure proper alignment for first element of complex message
-#endif
+// #if ROS2
+//             // Align array elements to 8-byte boundary (max alignment needed for ROS2 message elements)
+//             Align(8);  // (Added) ensure proper alignment for first element of complex message
+// #endif
             foreach (T entry in values)
             {
                 entry.SerializeTo(this);
