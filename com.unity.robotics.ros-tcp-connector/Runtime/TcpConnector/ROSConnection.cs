@@ -421,7 +421,8 @@ namespace Unity.Robotics.ROSTCPConnector
             public void SendPublisherRegistration(string topic, string message_name, int queueSize, bool latch, NetworkStream stream = null)
             {
                 m_Self.SendSysCommand(SysCommand.k_SysCommand_Publish,
-                    new SysCommand_PublisherRegistration { topic = topic, message_name = message_name, queue_size = queueSize, latch = latch }
+                    new SysCommand_PublisherRegistration { topic = topic, message_name = message_name, queue_size = queueSize, latch = latch },
+                    stream
                 );
             }
 
@@ -527,7 +528,7 @@ namespace Unity.Robotics.ROSTCPConnector
                 topics = AllTopics.ToArray();
             }
 
-            foreach (RosTopicState topicInfo in m_Topics.Values.ToArray())
+            foreach (RosTopicState topicInfo in topics)
                 topicInfo.OnConnectionEstablished(stream);
 
             RefreshTopicsList();

@@ -204,8 +204,17 @@ namespace Unity.Robotics.ROSTCPConnector
             }
             IsPublisher = true;
             IsPublisherLatched = latch;
-            m_ConnectionInternal.SendPublisherRegistration(m_Topic, m_RosMessageName, queueSize, latch);
             CreateMessageSender(queueSize);
+            // Same pattern as RegisterSubscriber: only send the registration now if a connection
+            // already exists. Otherwise, leave it to OnConnectionEstablished() once we actually
+            // connect -- avoids queuing a redundant/early registration that gets sent again (and,
+            // combined with the connection thread's queue-drain loop, out of order relative to
+            // Publish() calls that get queued in between) once OnConnectionEstablished also fires.
+            if (m_Connection.HasConnectionThread)
+            {
+                m_ConnectionInternal.SendPublisherRegistration(m_Topic, m_RosMessageName, queueSize, latch);
+                SentPublisherRegistration = true;
+            }
         }
 
         public void Publish(Message message)
@@ -259,10 +268,11 @@ namespace Unity.Robotics.ROSTCPConnector
                 m_ConnectionInternal.SendUnityServiceRegistration(m_Topic, m_RosMessageName, stream);
             }
 
-            if (IsPublisher)
+            if (IsPublisher && !SentPublisherRegistration)
             {
                 //Register the publisher before sending anything.
                 m_ConnectionInternal.SendPublisherRegistration(m_Topic, m_RosMessageName, m_MessageSender.QueueSize, IsPublisherLatched, stream);
+                SentPublisherRegistration = true;
                 if (IsPublisherLatched)
                 {
                     m_MessageSender.PrepareLatchMessage();
@@ -279,6 +289,7 @@ namespace Unity.Robotics.ROSTCPConnector
         internal void OnConnectionLost()
         {
             SentSubscriberRegistration = false;
+            SentPublisherRegistration = false;
         }
     }
 }
