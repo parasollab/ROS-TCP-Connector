@@ -133,6 +133,11 @@ namespace Unity.Robotics.ROSTCPConnector
 
         Dictionary<string, RosTopicState> m_Topics = new Dictionary<string, RosTopicState>();
 
+        public void StopListeningForTopics(Action<RosTopicState> callback)
+        {
+            m_NewTopicCallbacks.Remove(callback);
+        }
+
         public void ListenForTopics(Action<RosTopicState> callback, bool notifyAllExistingTopics = false)
         {
             m_NewTopicCallbacks.Add(callback);

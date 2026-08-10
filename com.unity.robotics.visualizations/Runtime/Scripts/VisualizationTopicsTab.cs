@@ -32,15 +32,29 @@ namespace Unity.Robotics.Visualizations
         SortMode m_SortMode;
         Texture2D m_FillTexture;
 
+        VisualizationLayoutTab m_LayoutTab;
+
         public void Start()
         {
             m_FillTexture = VisualizationUtils.MakeTexture(16, 16, new Color(0.125f, 0.19f, 0.25f));
 
             m_Connection = ROSConnection.GetOrCreateInstance();
             HudPanel.RegisterTab(this, (int)HudTabOrdering.Topics);
-            HudPanel.RegisterTab(new VisualizationLayoutTab(this), (int)HudTabOrdering.Layout);
+            m_LayoutTab = new VisualizationLayoutTab(this);
+            HudPanel.RegisterTab(m_LayoutTab, (int)HudTabOrdering.Layout);
             LoadLayout();
             m_Connection.ListenForTopics(OnNewTopic, notifyAllExistingTopics: true);
+        }
+
+        public void OnDestroy()
+        {
+            // ROSConnection and the HudPanel tab list survive scene loads; without
+            // this, every scene transition leaks another listener and tab pair.
+            if (m_Connection != null)
+                m_Connection.StopListeningForTopics(OnNewTopic);
+            HudPanel.UnregisterTab(this);
+            if (m_LayoutTab != null)
+                HudPanel.UnregisterTab(m_LayoutTab);
         }
 
         void OnNewTopic(RosTopicState state)

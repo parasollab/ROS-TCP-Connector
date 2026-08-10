@@ -113,6 +113,13 @@ namespace Unity.Robotics.ROSTCPConnector
             s_HUDTabs.Add(index, tab);
         }
 
+        public static void UnregisterTab(IHudTab tab)
+        {
+            int index = s_HUDTabs.IndexOfValue(tab);
+            if (index >= 0)
+                s_HUDTabs.RemoveAt(index);
+        }
+
         public static void RegisterHeader(Action headerContent, int index = 0)
         {
             if (s_HeaderContents.ContainsKey(index))

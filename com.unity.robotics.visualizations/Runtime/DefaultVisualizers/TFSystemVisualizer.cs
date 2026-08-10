@@ -21,6 +21,16 @@ namespace Unity.Robotics.Visualizations
                 color.a = 1;
         }
 
+        public void OnDestroy()
+        {
+            // TFSystem and the HudPanel tab list are static and survive scene loads;
+            // leaving the listener behind makes every /tf message throw on the
+            // destroyed drawings of the previous scene.
+            if (TFSystem.instance != null)
+                TFSystem.instance.RemoveListener(OnChanged);
+            HudPanel.UnregisterTab(this);
+        }
+
         void EnsureSettings(TFStream stream)
         {
             if (!m_ShowExpanded.ContainsKey(stream))
@@ -34,8 +44,11 @@ namespace Unity.Robotics.Visualizations
 
         public void OnChanged(TFStream stream)
         {
+            if (this == null)
+                return;
+
             Drawing3d drawing;
-            if (!drawings.TryGetValue(stream.Name, out drawing))
+            if (!drawings.TryGetValue(stream.Name, out drawing) || drawing == null)
             {
                 drawing = Drawing3d.Create();
                 drawings[stream.Name] = drawing;
@@ -43,7 +56,7 @@ namespace Unity.Robotics.Visualizations
                 {
                     OnChanged(stream.Parent);
                     Drawing3d parentStream;
-                    if (drawings.TryGetValue(stream.Parent.Name, out parentStream))
+                    if (drawings.TryGetValue(stream.Parent.Name, out parentStream) && parentStream != null)
                     {
                         drawing.transform.parent = parentStream.transform;
                     }

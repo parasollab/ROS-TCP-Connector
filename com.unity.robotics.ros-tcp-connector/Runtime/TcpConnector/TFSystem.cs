@@ -95,11 +95,17 @@ public class TFSystem
             m_Listeners.Add(callback);
         }
 
+        public void RemoveListener(Action<TFStream> callback)
+        {
+            m_Listeners.Remove(callback);
+        }
+
         public void NotifyChanged(TFStream stream)
         {
-            foreach (Action<TFStream> callback in m_Listeners)
+            // Reverse iteration tolerates a callback removing itself mid-notify.
+            for (int i = m_Listeners.Count - 1; i >= 0; i--)
             {
-                callback(stream);
+                m_Listeners[i](stream);
             }
         }
 
@@ -145,6 +151,13 @@ public class TFSystem
         state.AddListener(callback);
         if (notifyAllStreamsNow)
             state.NotifyAllChanged();
+    }
+
+    public void RemoveListener(Action<TFStream> callback, string tfTopic = "/tf")
+    {
+        TFTopicState state;
+        if (m_TFTopics.TryGetValue(tfTopic, out state))
+            state.RemoveListener(callback);
     }
 
     public void NotifyAllChanged(TFStream stream)
