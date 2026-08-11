@@ -189,10 +189,15 @@ namespace Unity.Robotics.ROSTCPConnector
             return result;
         }
 
+        // Maps each Subscribe<T> caller's delegate to the Action<Message> wrapper actually
+        // registered, so Unsubscribe<T> can remove exactly that one callback.
+        Dictionary<(string, Delegate), Action<Message>> m_SubscriberWrappers =
+            new Dictionary<(string, Delegate), Action<Message>>();
+
         public void Subscribe<T>(string topic, Action<T> callback) where T : Message
         {
             string rosMessageName = MessageRegistry.GetRosMessageName<T>();
-            AddSubscriberInternal(topic, rosMessageName, (Message msg) =>
+            Action<Message> wrapper = (Message msg) =>
             {
                 if (msg.RosMessageName == rosMessageName)
                 {
@@ -202,7 +207,22 @@ namespace Unity.Robotics.ROSTCPConnector
                 {
                     Debug.LogError($"Subscriber to '{topic}' expected '{rosMessageName}' but received '{msg.RosMessageName}'!?");
                 }
-            });
+            };
+            m_SubscriberWrappers[(topic, callback)] = wrapper;
+            AddSubscriberInternal(topic, rosMessageName, wrapper);
+        }
+
+        // Removes a single subscriber callback; other subscribers on the topic are unaffected.
+        public void Unsubscribe<T>(string topic, Action<T> callback) where T : Message
+        {
+            Action<Message> wrapper;
+            if (m_SubscriberWrappers.TryGetValue((topic, callback), out wrapper))
+            {
+                m_SubscriberWrappers.Remove((topic, callback));
+                RosTopicState info = GetTopic(topic);
+                if (info != null)
+                    info.RemoveSubscriber(wrapper);
+            }
         }
 
         public void Unsubscribe(string topic)

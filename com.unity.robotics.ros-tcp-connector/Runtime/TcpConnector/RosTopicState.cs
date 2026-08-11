@@ -163,6 +163,14 @@ namespace Unity.Robotics.ROSTCPConnector
             }
         }
 
+        public void RemoveSubscriber(Action<Message> callback)
+        {
+            // Removes one callback without touching the server registration, so other
+            // subscribers on the same topic (e.g. the incoming scene during an additive
+            // scene transition) keep receiving messages.
+            m_SubscriberCallbacks.Remove(callback);
+        }
+
         public void UnsubscribeAll()
         {
             m_SubscriberCallbacks.Clear();
