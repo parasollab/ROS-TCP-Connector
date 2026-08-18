@@ -45,7 +45,11 @@ namespace Unity.Robotics.ROSTCPConnector
         public float NetworkTimeoutSeconds { get => m_NetworkTimeoutSeconds; set => m_NetworkTimeoutSeconds = value; }
 
         [SerializeField]
-        float m_SleepTimeSeconds = 0.01f;
+        [Tooltip("Reader-thread polling interval. Every incoming message can pay one or more of " +
+                 "these sleeps, so keep it at 1-2 ms for low-latency teleop. NOTE: this value is " +
+                 "serialized on the ROSConnection instance in the scene/prefab — changing the code " +
+                 "default does not update existing scenes.")]
+        float m_SleepTimeSeconds = 0.002f;
         public float SleepTimeSeconds { get => m_SleepTimeSeconds; set => m_SleepTimeSeconds = value; }
 
 
@@ -788,6 +792,10 @@ namespace Unity.Robotics.ROSTCPConnector
                     ROSConnection.m_HasConnectionError = true; // until we actually see a reply back, assume there's a problem
 
                     client = new TcpClient();
+                    // Disable Nagle's algorithm: we stream many small messages
+                    // (~100 B poses at 30-72 Hz) where its interaction with
+                    // delayed ACKs adds tens to hundreds of ms of latency.
+                    client.NoDelay = true;
                     client.Connect(rosIPAddress, rosPort);
 
                     NetworkStream networkStream = client.GetStream();
