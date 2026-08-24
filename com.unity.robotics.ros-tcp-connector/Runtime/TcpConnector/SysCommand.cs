@@ -22,6 +22,18 @@ namespace Unity.Robotics.ROSTCPConnector
         public const string k_SysCommand_RemovePublisher = "__remove_publisher";
         public const string k_SysCommand_RemoveRosService = "__remove_ros_service";
         public const string k_SysCommand_RemoveUnityService = "__remove_unity_service";
+        public const string k_SysCommand_RosAction = "__ros_action";
+        public const string k_SysCommand_RemoveRosAction = "__remove_ros_action";
+        public const string k_SysCommand_ActionGoal = "__action_goal";
+        public const string k_SysCommand_ActionCancel = "__action_cancel";
+        public const string k_SysCommand_ActionRegistered = "__action_registered";
+        public const string k_SysCommand_ActionGoalResponse = "__action_goal_response";
+        public const string k_SysCommand_ActionFeedback = "__action_feedback";
+        public const string k_SysCommand_ActionResult = "__action_result";
+        public const string k_SysCommand_ActionCancelResponse = "__action_cancel_response";
+        public const string k_SysCommand_ActionError = "__action_error";
+        internal const string k_InternalConnectionStarted = "__internal_connection_started";
+        internal const string k_InternalConnectionLost = "__internal_connection_lost";
 
         public abstract string Command
         {
@@ -82,6 +94,7 @@ namespace Unity.Robotics.ROSTCPConnector
     public struct SysCommand_Handshake_Metadata
     {
         public string protocol; // "ROS1" or "ROS2"
+        public string[] capabilities;
     }
 
     public struct SysCommand_Log
@@ -110,5 +123,47 @@ namespace Unity.Robotics.ROSTCPConnector
         public string message_name;
         public int queue_size;
         public bool latch;
+    }
+
+    public struct SysCommand_ActionRegistration
+    {
+        public string action_name;
+        public string message_name;
+    }
+
+    public struct SysCommand_ActionGoal
+    {
+        public string action_name;
+        public string goal_id;
+    }
+
+    public struct SysCommand_ActionGoalResponse
+    {
+        public string action_name;
+        public string goal_id;
+        public bool accepted;
+        public string ros_goal_id;
+    }
+
+    public struct SysCommand_ActionResult
+    {
+        public string action_name;
+        public string goal_id;
+        public int status;
+    }
+
+    public struct SysCommand_ActionCancelResponse
+    {
+        public string action_name;
+        public string goal_id;
+        public int return_code;
+    }
+
+    public struct SysCommand_ActionError
+    {
+        public string action_name;
+        public string goal_id;
+        public string code;
+        public string message;
     }
 }

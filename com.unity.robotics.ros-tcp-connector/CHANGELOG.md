@@ -22,6 +22,22 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/) a
 ### Fixed
 
 
+## [0.7.1] - 2026-08-24
+
+### Added
+
+- Added native Unity-client ROS 2 action support with typed goal, feedback, result,
+  status, error, and cancellation APIs.
+- Added `ros2_actions_v1` endpoint capability negotiation and reconnect handling.
+
+### Changed
+
+- ROS 2 `.action` generation now emits the Goal, Result, and Feedback message
+  sections without ROS 1 `actionlib` wrapper messages.
+- Action callbacks and task completion are dispatched exclusively by
+  `ROSConnection.Update()` on Unity's main thread.
+
+
 ## [0.7.0-preview] - 2022-02-01
 
 ### Added

@@ -67,7 +67,9 @@ namespace Unity.Robotics.ROSTCPConnector.MessageGeneration
 
             List<string> warnings = new List<string>();
 
+#if !ROS2
             ActionWrapper actionWrapper = new ActionWrapper(inPath, rosPackageName, outPath);
+#endif
 
             for (int i = 0; i < listsOfTokens.Count; i++)
             {
@@ -91,11 +93,15 @@ namespace Unity.Robotics.ROSTCPConnector.MessageGeneration
                 warnings.AddRange(parser.GetWarnings());
 
                 // Generate action section wrapper messages
+#if !ROS2
                 actionWrapper.WrapActionSections(types[i]);
+#endif
             }
 
             // Generate action wrapper
+#if !ROS2
             actionWrapper.WrapAction();
+#endif
 
             return warnings;
         }
@@ -434,4 +440,3 @@ namespace Unity.Robotics.ROSTCPConnector.MessageGeneration
 
     }
 }
-

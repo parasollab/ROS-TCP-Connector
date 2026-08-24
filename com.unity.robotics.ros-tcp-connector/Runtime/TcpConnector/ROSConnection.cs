@@ -15,7 +15,7 @@ namespace Unity.Robotics.ROSTCPConnector
 {
     public class ROSConnection : MonoBehaviour
     {
-        public const string k_Version = "v0.7.0";
+        public const string k_Version = "v0.7.1";
         public const string k_CompatibleVersionPrefix = "v0.7.";
 
         // Variables required for ROS communication
@@ -132,6 +132,11 @@ namespace Unity.Robotics.ROSTCPConnector
         List<Action<RosTopicState>> m_NewTopicCallbacks = new List<Action<RosTopicState>>();
 
         Dictionary<string, RosTopicState> m_Topics = new Dictionary<string, RosTopicState>();
+        readonly Dictionary<string, IRosActionClientInternal> m_ActionClients =
+            new Dictionary<string, IRosActionClientInternal>();
+        bool m_EndpointCapabilitiesKnown;
+        bool m_EndpointSupportsActions;
+        int m_MainThreadId;
 
         public void StopListeningForTopics(Action<RosTopicState> callback)
         {
@@ -390,6 +395,46 @@ namespace Unity.Robotics.ROSTCPConnector
             info.RegisterRosService(responseMessageName, resolvedQueueSize);
         }
 
+        public IRosActionClient<TGoal, TResult, TFeedback>
+            RegisterActionClient<TGoal, TResult, TFeedback>(string actionName)
+            where TGoal : Message
+            where TResult : Message
+            where TFeedback : Message
+        {
+            AssertActionMainThread();
+            if (string.IsNullOrEmpty(actionName))
+                throw new ArgumentException("Action name cannot be empty", nameof(actionName));
+
+            string goalName = MessageRegistry.GetRosMessageName<TGoal>();
+            string resultName = MessageRegistry.GetRosMessageName<TResult>();
+            string feedbackName = MessageRegistry.GetRosMessageName<TFeedback>();
+            if (goalName != resultName || goalName != feedbackName)
+                throw new ArgumentException("Goal, result, and feedback must belong to the same ROS action");
+            if (MessageRegistry.GetSubtopic<TGoal>() != MessageSubtopic.Goal ||
+                MessageRegistry.GetSubtopic<TResult>() != MessageSubtopic.Result ||
+                MessageRegistry.GetSubtopic<TFeedback>() != MessageSubtopic.Feedback)
+                throw new ArgumentException("Action message types have incorrect goal/result/feedback registration");
+
+            IRosActionClientInternal existing;
+            if (m_ActionClients.TryGetValue(actionName, out existing))
+            {
+                var typed = existing as IRosActionClient<TGoal, TResult, TFeedback>;
+                if (typed == null)
+                    throw new InvalidOperationException(actionName + " is already registered with another action type");
+                return typed;
+            }
+
+            var client = new RosActionClient<TGoal, TResult, TFeedback>(this, actionName, goalName);
+            m_ActionClients.Add(actionName, client);
+#if ROS2
+            if (m_EndpointCapabilitiesKnown)
+                client.ResolveEndpointCapability(m_EndpointSupportsActions);
+#else
+            client.ResolveEndpointCapability(false);
+#endif
+            return client;
+        }
+
         [Obsolete("Calling ImplementUnityService now implicitly registers it")]
         public void RegisterUnityService(string topic, string rosMessageName)
         {
@@ -499,6 +544,7 @@ namespace Unity.Robotics.ROSTCPConnector
 
         void Awake()
         {
+            m_MainThreadId = Thread.CurrentThread.ManagedThreadId;
             if (_instance == null)
                 _instance = this;
         }
@@ -544,34 +590,18 @@ namespace Unity.Robotics.ROSTCPConnector
             ));
         }
 
-        // NB this callback is not running on the main thread, be cautious about modifying data here
+        // These callbacks run on the connection thread. They only enqueue immutable
+        // lifecycle events; Unity-owned state is updated by Update().
         void OnConnectionStartedCallback(NetworkStream stream)
         {
-            RosTopicState[] topics;
-            lock (m_Topics)
-            {
-                topics = AllTopics.ToArray();
-            }
-
-            foreach (RosTopicState topicInfo in topics)
-                topicInfo.OnConnectionEstablished(stream);
-
-            RefreshTopicsList();
+            m_IncomingMessages.Enqueue(Tuple.Create(
+                SysCommand.k_InternalConnectionStarted, Array.Empty<byte>()));
         }
 
         void OnConnectionLostCallback()
         {
-            RosTopicState[] topics;
-            lock (m_Topics)
-            {
-                topics = AllTopics.ToArray();
-            }
-
-            foreach (RosTopicState topicInfo in topics)
-            {
-                //For all publishers, notify that they need to re-register.
-                topicInfo.OnConnectionLost();
-            }
+            m_IncomingMessages.Enqueue(Tuple.Create(
+                SysCommand.k_InternalConnectionLost, Array.Empty<byte>()));
         }
 
         public void Disconnect()
@@ -604,7 +634,12 @@ namespace Unity.Robotics.ROSTCPConnector
                 (string topic, byte[] contents) = data;
                 m_LastMessageReceivedRealtime = Time.realtimeSinceStartup;
 
-                if (m_SpecialIncomingMessageHandler != null)
+                if (topic == SysCommand.k_InternalConnectionStarted ||
+                    topic == SysCommand.k_InternalConnectionLost)
+                {
+                    ReceiveSysCommand(topic, "");
+                }
+                else if (m_SpecialIncomingMessageHandler != null)
                 {
                     m_SpecialIncomingMessageHandler(topic, contents);
                 }
@@ -686,6 +721,95 @@ namespace Unity.Robotics.ROSTCPConnector
                             Debug.LogError($"Incompatible protocol: ROS-TCP-Endpoint is using {handshakeMetadata.protocol}, but Unity is in ROS1 mode. Switch it from the Robotics/Ros Settings menu.");
                         }
 #endif
+                        m_EndpointCapabilitiesKnown = true;
+                        m_EndpointSupportsActions = handshakeMetadata.capabilities != null &&
+                            handshakeMetadata.capabilities.Contains("ros2_actions_v1");
+                        foreach (IRosActionClientInternal actionClient in m_ActionClients.Values)
+                            actionClient.ResolveEndpointCapability(m_EndpointSupportsActions);
+                    }
+                    break;
+                case SysCommand.k_InternalConnectionStarted:
+                    {
+                        RosTopicState[] topics;
+                        lock (m_Topics)
+                            topics = AllTopics.ToArray();
+                        foreach (RosTopicState topicInfo in topics)
+                            topicInfo.OnConnectionEstablished(null);
+                        RefreshTopicsList();
+                    }
+                    break;
+                case SysCommand.k_InternalConnectionLost:
+                    // Do not let a command that lost its payload consume the first frame
+                    // received after a reconnect.
+                    m_SpecialIncomingMessageHandler = null;
+                    lock (m_Topics)
+                    {
+                        foreach (RosTopicState topicInfo in AllTopics)
+                            topicInfo.OnConnectionLost();
+                    }
+                    m_EndpointCapabilitiesKnown = false;
+                    m_EndpointSupportsActions = false;
+                    foreach (IRosActionClientInternal actionClient in m_ActionClients.Values)
+                        actionClient.OnConnectionLost();
+                    break;
+                case SysCommand.k_SysCommand_ActionRegistered:
+                    {
+                        var action = JsonUtility.FromJson<SysCommand_ActionRegistration>(json);
+                        IRosActionClientInternal client;
+                        if (m_ActionClients.TryGetValue(action.action_name, out client))
+                            client.OnRegistered();
+                    }
+                    break;
+                case SysCommand.k_SysCommand_ActionGoalResponse:
+                    {
+                        var response = JsonUtility.FromJson<SysCommand_ActionGoalResponse>(json);
+                        IRosActionClientInternal client;
+                        if (m_ActionClients.TryGetValue(response.action_name, out client))
+                            client.OnGoalResponse(response);
+                    }
+                    break;
+                case SysCommand.k_SysCommand_ActionFeedback:
+                    {
+                        var feedback = JsonUtility.FromJson<SysCommand_ActionGoal>(json);
+                        m_SpecialIncomingMessageHandler = (string actionName, byte[] contents) =>
+                        {
+                            m_SpecialIncomingMessageHandler = null;
+                            IRosActionClientInternal client;
+                            if (actionName == feedback.action_name &&
+                                m_ActionClients.TryGetValue(actionName, out client))
+                                client.OnFeedback(feedback.goal_id, contents);
+                        };
+                    }
+                    break;
+                case SysCommand.k_SysCommand_ActionResult:
+                    {
+                        var result = JsonUtility.FromJson<SysCommand_ActionResult>(json);
+                        m_SpecialIncomingMessageHandler = (string actionName, byte[] contents) =>
+                        {
+                            m_SpecialIncomingMessageHandler = null;
+                            IRosActionClientInternal client;
+                            if (actionName == result.action_name &&
+                                m_ActionClients.TryGetValue(actionName, out client))
+                                client.OnResult(result, contents);
+                        };
+                    }
+                    break;
+                case SysCommand.k_SysCommand_ActionCancelResponse:
+                    {
+                        var response = JsonUtility.FromJson<SysCommand_ActionCancelResponse>(json);
+                        IRosActionClientInternal client;
+                        if (m_ActionClients.TryGetValue(response.action_name, out client))
+                            client.OnCancelResponse(response);
+                    }
+                    break;
+                case SysCommand.k_SysCommand_ActionError:
+                    {
+                        var error = JsonUtility.FromJson<SysCommand_ActionError>(json);
+                        IRosActionClientInternal client;
+                        if (m_ActionClients.TryGetValue(error.action_name, out client))
+                            client.OnError(error);
+                        else
+                            Debug.LogError("ROS action error: " + error.code + ": " + error.message);
                     }
                     break;
                 case SysCommand.k_SysCommand_Log:
@@ -1013,6 +1137,60 @@ namespace Unity.Robotics.ROSTCPConnector
         {
             PopulateSysCommand(m_MessageSerializer, command, param);
             m_OutgoingMessageQueue.Enqueue(new SysCommandSender(m_MessageSerializer.GetBytesSequence()));
+        }
+
+        internal void QueueActionRegistration(string actionName, string rosMessageName)
+        {
+            AssertActionMainThread();
+            QueueSysCommand(SysCommand.k_SysCommand_RosAction, new SysCommand_ActionRegistration
+            {
+                action_name = actionName,
+                message_name = rosMessageName,
+            });
+        }
+
+        internal void QueueActionGoal(string actionName, string goalId, Message goal)
+        {
+            AssertActionMainThread();
+            var serializer = new MessageSerializer();
+            var statements = new List<byte[]>();
+
+            PopulateSysCommand(serializer, SysCommand.k_SysCommand_ActionGoal, new SysCommand_ActionGoal
+            {
+                action_name = actionName,
+                goal_id = goalId,
+            });
+            statements.AddRange(serializer.GetBytesSequence());
+
+            serializer.Clear();
+            serializer.Write(actionName);
+            serializer.SerializeMessageWithLength(goal);
+            statements.AddRange(serializer.GetBytesSequence());
+            m_OutgoingMessageQueue.Enqueue(new SysCommandSender(statements));
+        }
+
+        internal void QueueActionCancel(string actionName, string goalId)
+        {
+            AssertActionMainThread();
+            QueueSysCommand(SysCommand.k_SysCommand_ActionCancel, new SysCommand_ActionGoal
+            {
+                action_name = actionName,
+                goal_id = goalId,
+            });
+        }
+
+        internal T DeserializeActionMessage<T>(byte[] data, MessageSubtopic subtopic) where T : Message
+        {
+            AssertActionMainThread();
+            return (T)m_MessageDeserializer.DeserializeMessage(
+                MessageRegistry.GetRosMessageName<T>(), data, subtopic);
+        }
+
+        [System.Diagnostics.Conditional("UNITY_ASSERTIONS")]
+        internal void AssertActionMainThread()
+        {
+            Debug.Assert(m_MainThreadId == 0 || m_MainThreadId == Thread.CurrentThread.ManagedThreadId,
+                "ROS action interfaces must be called on Unity's main thread");
         }
 
         [Obsolete("Use Publish instead of Send", false)]
