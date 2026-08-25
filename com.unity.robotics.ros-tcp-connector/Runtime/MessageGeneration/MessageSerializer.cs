@@ -103,8 +103,13 @@ namespace Unity.Robotics.ROSTCPConnector.MessageGeneration
 
         public void SendTo(System.IO.Stream stream)
         {
-            foreach (byte[] statement in m_ListOfSerializations)
-                stream.Write(statement, 0, statement.Length);
+            // One Write per message, not one per field. With TCP_NODELAY (which we
+            // set for latency) every Write becomes its own TCP segment, so the
+            // per-field version turned a ~150-byte PoseStamped into ~15 packets and
+            // a 72 Hz bimanual stream into >2000 packets/s — enough to choke USB
+            // Wi-Fi adapters and inflate Wi-Fi airtime. The copy is tiny by comparison.
+            byte[] bytes = GetBytes();
+            stream.Write(bytes, 0, bytes.Length);
         }
 
         // Alignment, offset, padding

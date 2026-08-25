@@ -52,6 +52,15 @@ namespace Unity.Robotics.ROSTCPConnector
         float m_SleepTimeSeconds = 0.002f;
         public float SleepTimeSeconds { get => m_SleepTimeSeconds; set => m_SleepTimeSeconds = value; }
 
+        [SerializeField]
+        [Tooltip("TCP send buffer size in bytes (0 = OS default, ~0.5 MB on Android). Keep this " +
+                 "SMALL for teleop: anything the network hasn't delivered yet sits in this buffer " +
+                 "ahead of every newer message, so on a Wi-Fi stall a large buffer turns into " +
+                 "seconds of lag. A small buffer blocks the sender instead, and the per-topic " +
+                 "drop-oldest queues then discard stale poses rather than delaying fresh ones.")]
+        int m_SendBufferBytes = 16384;
+        public int SendBufferBytes { get => m_SendBufferBytes; set => m_SendBufferBytes = value; }
+
 
         [SerializeField]
         [FormerlySerializedAs("showHUD")]
@@ -515,6 +524,7 @@ namespace Unity.Robotics.ROSTCPConnector
                 m_NetworkTimeoutSeconds,
                 m_KeepaliveTime,
                 (int)(m_SleepTimeSeconds * 1000.0f),
+                m_SendBufferBytes,
                 OnConnectionStartedCallback,
                 OnConnectionLostCallback,
                 m_OutgoingMessageQueue,
@@ -771,6 +781,7 @@ namespace Unity.Robotics.ROSTCPConnector
             float networkTimeoutSeconds,
             float keepaliveTime,
             int sleepMilliseconds,
+            int sendBufferBytes,
             Action<NetworkStream> OnConnectionStartedCallback,
             Action DeregisterAll,
             OutgoingMessageQueue outgoingQueue,
@@ -780,6 +791,8 @@ namespace Unity.Robotics.ROSTCPConnector
             //Debug.Log("ConnectionThread begins");
             int nextReaderIdx = 101;
             int nextReconnectionDelay = 1000;
+            float lastQueueFullWarning = -1f;
+            int droppedSinceWarning = 0;
             MessageSerializer messageSerializer = new MessageSerializer();
 
             while (!token.IsCancellationRequested)
@@ -796,6 +809,8 @@ namespace Unity.Robotics.ROSTCPConnector
                     // (~100 B poses at 30-72 Hz) where its interaction with
                     // delayed ACKs adds tens to hundreds of ms of latency.
                     client.NoDelay = true;
+                    if (sendBufferBytes > 0)
+                        client.SendBufferSize = sendBufferBytes; // see m_SendBufferBytes tooltip
                     client.Connect(rosIPAddress, rosPort);
 
                     NetworkStream networkStream = client.GetStream();
@@ -839,8 +854,15 @@ namespace Unity.Robotics.ROSTCPConnector
                                 case OutgoingMessageSender.SendToState.QueueFullWarning:
                                     //Unable to send messages to ROS as fast as we're generating them.
                                     //This could be caused by a TCP connection that is too slow.
-                                    Debug.LogWarning($"Queue full! Messages are getting dropped! " +
-                                                     "Try check your connection speed is fast enough to handle the traffic.");
+                                    //Rate-limited: one line per second with the drop count.
+                                    droppedSinceWarning++;
+                                    if (s_RealTimeSinceStartup - lastQueueFullWarning >= 1f)
+                                    {
+                                        Debug.LogWarning($"Queue full! {droppedSinceWarning} message(s) dropped in the last " +
+                                                         "second (network can't keep up; stale poses discarded).");
+                                        droppedSinceWarning = 0;
+                                        lastQueueFullWarning = s_RealTimeSinceStartup;
+                                    }
                                     break;
                                 case OutgoingMessageSender.SendToState.NoMessageToSendError:
                                     //This indicates
