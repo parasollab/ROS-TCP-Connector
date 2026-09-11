@@ -29,6 +29,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/) a
 - Added native Unity-client ROS 2 action support with typed goal, feedback, result,
   status, error, and cancellation APIs.
 - Added `ros2_actions_v1` endpoint capability negotiation and reconnect handling.
+- Added an importable Fibonacci action-client sample with success, rejection,
+  feedback, abort, result, cancellation, and disconnect logging.
 
 ### Changed
 

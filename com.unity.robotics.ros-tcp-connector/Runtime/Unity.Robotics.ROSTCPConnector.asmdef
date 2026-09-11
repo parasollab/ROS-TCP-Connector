@@ -10,6 +10,7 @@
         "Android",
         "Editor",
         "iOS",
+        "VisionOS",
         "LinuxStandalone64",
         "macOSStandalone",
         "WSA",

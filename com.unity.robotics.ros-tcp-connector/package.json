@@ -5,5 +5,12 @@
   "description": "Bridge components and message generation allowing Unity to communicate with ROS topics, services, and ROS 2 actions",
   "unity": "2020.2",
   "unityRelease": "0b9",
-  "dependencies": {}
+  "dependencies": {},
+  "samples": [
+    {
+      "displayName": "ROS 2 Action Client Demo",
+      "description": "A self-contained Fibonacci action client with success, rejection, abort, feedback, result, and cancellation controls.",
+      "path": "Samples~/ROS2ActionDemo"
+    }
+  ]
 }
