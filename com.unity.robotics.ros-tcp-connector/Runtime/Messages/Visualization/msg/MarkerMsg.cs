@@ -13,11 +13,6 @@ namespace RosMessageTypes.Visualization
         public const string k_RosMessageName = "visualization_msgs/Marker";
         public override string RosMessageName => k_RosMessageName;
 
-        //  See:
-        //   - http://www.ros.org/wiki/rviz/DisplayTypes/Marker
-        //   - http://www.ros.org/wiki/rviz/Tutorials/Markers%3A%20Basic%20Shapes
-        // 
-        //  for more information on using this message with rviz.
         public const int ARROW = 0;
         public const int CUBE = 1;
         public const int SPHERE = 2;
@@ -30,46 +25,29 @@ namespace RosMessageTypes.Visualization
         public const int TEXT_VIEW_FACING = 9;
         public const int MESH_RESOURCE = 10;
         public const int TRIANGLE_LIST = 11;
+        public const int ARROW_STRIP = 12;
         public const int ADD = 0;
         public const int MODIFY = 0;
         public const int DELETE = 2;
         public const int DELETEALL = 3;
-        //  Header for timestamp and frame id.
         public Std.HeaderMsg header;
-        //  Namespace in which to place the object.
-        //  Used in conjunction with id to create a unique name for the object.
         public string ns;
-        //  Object ID used in conjunction with the namespace for manipulating and deleting the object later.
         public int id;
-        //  Type of object.
         public int type;
-        //  Action to take; one of:
-        //   - 0 add/modify an object
-        //   - 1 (deprecated)
-        //   - 2 deletes an object
-        //   - 3 deletes all objects
         public int action;
-        //  Pose of the object with respect the frame_id specified in the header.
         public Geometry.PoseMsg pose;
-        //  Scale of the object; 1,1,1 means default (usually 1 meter square).
         public Geometry.Vector3Msg scale;
-        //  Color of the object; in the range: [0.0-1.0]
         public Std.ColorRGBAMsg color;
-        //  How long the object should last before being automatically deleted.
-        //  0 indicates forever.
         public BuiltinInterfaces.DurationMsg lifetime;
-        //  If this marker should be frame-locked, i.e. retransformed into its frame every timestep.
         public bool frame_locked;
-        //  Only used if the type specified has some use for them (eg. POINTS, LINE_STRIP, etc.)
         public Geometry.PointMsg[] points;
-        //  Only used if the type specified has some use for them (eg. POINTS, LINE_STRIP, etc.)
-        //  The number of colors provided must either be 0 or equal to the number of points provided.
-        //  NOTE: alpha is not yet used
         public Std.ColorRGBAMsg[] colors;
-        //  Only used for text markers
+        public string texture_resource;
+        public Sensor.CompressedImageMsg texture;
+        public UVCoordinateMsg[] uv_coordinates;
         public string text;
-        //  Only used for MESH_RESOURCE markers.
         public string mesh_resource;
+        public MeshFileMsg mesh_file;
         public bool mesh_use_embedded_materials;
 
         public MarkerMsg()
@@ -86,12 +64,16 @@ namespace RosMessageTypes.Visualization
             this.frame_locked = false;
             this.points = new Geometry.PointMsg[0];
             this.colors = new Std.ColorRGBAMsg[0];
+            this.texture_resource = "";
+            this.texture = new Sensor.CompressedImageMsg();
+            this.uv_coordinates = new UVCoordinateMsg[0];
             this.text = "";
             this.mesh_resource = "";
+            this.mesh_file = new MeshFileMsg();
             this.mesh_use_embedded_materials = false;
         }
 
-        public MarkerMsg(Std.HeaderMsg header, string ns, int id, int type, int action, Geometry.PoseMsg pose, Geometry.Vector3Msg scale, Std.ColorRGBAMsg color, BuiltinInterfaces.DurationMsg lifetime, bool frame_locked, Geometry.PointMsg[] points, Std.ColorRGBAMsg[] colors, string text, string mesh_resource, bool mesh_use_embedded_materials)
+        public MarkerMsg(Std.HeaderMsg header, string ns, int id, int type, int action, Geometry.PoseMsg pose, Geometry.Vector3Msg scale, Std.ColorRGBAMsg color, BuiltinInterfaces.DurationMsg lifetime, bool frame_locked, Geometry.PointMsg[] points, Std.ColorRGBAMsg[] colors, string texture_resource, Sensor.CompressedImageMsg texture, UVCoordinateMsg[] uv_coordinates, string text, string mesh_resource, MeshFileMsg mesh_file, bool mesh_use_embedded_materials)
         {
             this.header = header;
             this.ns = ns;
@@ -105,8 +87,12 @@ namespace RosMessageTypes.Visualization
             this.frame_locked = frame_locked;
             this.points = points;
             this.colors = colors;
+            this.texture_resource = texture_resource;
+            this.texture = texture;
+            this.uv_coordinates = uv_coordinates;
             this.text = text;
             this.mesh_resource = mesh_resource;
+            this.mesh_file = mesh_file;
             this.mesh_use_embedded_materials = mesh_use_embedded_materials;
         }
 
@@ -126,8 +112,12 @@ namespace RosMessageTypes.Visualization
             deserializer.Read(out this.frame_locked);
             deserializer.Read(out this.points, Geometry.PointMsg.Deserialize, deserializer.ReadLength());
             deserializer.Read(out this.colors, Std.ColorRGBAMsg.Deserialize, deserializer.ReadLength());
+            deserializer.Read(out this.texture_resource);
+            this.texture = Sensor.CompressedImageMsg.Deserialize(deserializer);
+            deserializer.Read(out this.uv_coordinates, UVCoordinateMsg.Deserialize, deserializer.ReadLength());
             deserializer.Read(out this.text);
             deserializer.Read(out this.mesh_resource);
+            this.mesh_file = MeshFileMsg.Deserialize(deserializer);
             deserializer.Read(out this.mesh_use_embedded_materials);
         }
 
@@ -147,8 +137,13 @@ namespace RosMessageTypes.Visualization
             serializer.Write(this.points);
             serializer.WriteLength(this.colors);
             serializer.Write(this.colors);
+            serializer.Write(this.texture_resource);
+            serializer.Write(this.texture);
+            serializer.WriteLength(this.uv_coordinates);
+            serializer.Write(this.uv_coordinates);
             serializer.Write(this.text);
             serializer.Write(this.mesh_resource);
+            serializer.Write(this.mesh_file);
             serializer.Write(this.mesh_use_embedded_materials);
         }
 
@@ -167,8 +162,12 @@ namespace RosMessageTypes.Visualization
             "\nframe_locked: " + frame_locked.ToString() +
             "\npoints: " + System.String.Join(", ", points.ToList()) +
             "\ncolors: " + System.String.Join(", ", colors.ToList()) +
+            "\ntexture_resource: " + texture_resource.ToString() +
+            "\ntexture: " + texture.ToString() +
+            "\nuv_coordinates: " + System.String.Join(", ", uv_coordinates.ToList()) +
             "\ntext: " + text.ToString() +
             "\nmesh_resource: " + mesh_resource.ToString() +
+            "\nmesh_file: " + mesh_file.ToString() +
             "\nmesh_use_embedded_materials: " + mesh_use_embedded_materials.ToString();
         }
 

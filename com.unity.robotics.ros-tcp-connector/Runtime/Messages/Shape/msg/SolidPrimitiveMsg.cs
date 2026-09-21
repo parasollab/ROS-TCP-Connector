@@ -13,46 +13,36 @@ namespace RosMessageTypes.Shape
         public const string k_RosMessageName = "shape_msgs/SolidPrimitive";
         public override string RosMessageName => k_RosMessageName;
 
-        //  Defines box, sphere, cylinder, and cone.
-        //  All shapes are defined to have their bounding boxes centered around 0,0,0.
         public const byte BOX = 1;
         public const byte SPHERE = 2;
         public const byte CYLINDER = 3;
         public const byte CONE = 4;
-        //  The type of the shape
+        public const byte PRISM = 5;
         public byte type;
-        //  The dimensions of the shape
         public double[] dimensions;
-        //  At no point will dimensions have a length > 3.
-        //  The meaning of the shape dimensions: each constant defines the index in the 'dimensions' array.
-        //  For type BOX, the X, Y, and Z dimensions are the length of the corresponding sides of the box.
         public const byte BOX_X = 0;
         public const byte BOX_Y = 1;
         public const byte BOX_Z = 2;
-        //  For the SPHERE type, only one component is used, and it gives the radius of the sphere.
         public const byte SPHERE_RADIUS = 0;
-        //  For the CYLINDER and CONE types, the center line is oriented along the Z axis.
-        //  Therefore the CYLINDER_HEIGHT (CONE_HEIGHT) component of dimensions gives the
-        //  height of the cylinder (cone).
-        //  The CYLINDER_RADIUS (CONE_RADIUS) component of dimensions gives the radius of
-        //  the base of the cylinder (cone).
-        //  Cone and cylinder primitives are defined to be circular. The tip of the cone
-        //  is pointing up, along +Z axis.
         public const byte CYLINDER_HEIGHT = 0;
         public const byte CYLINDER_RADIUS = 1;
         public const byte CONE_HEIGHT = 0;
         public const byte CONE_RADIUS = 1;
+        public const byte PRISM_HEIGHT = 0;
+        public Geometry.PolygonMsg polygon;
 
         public SolidPrimitiveMsg()
         {
             this.type = 0;
             this.dimensions = new double[0];
+            this.polygon = new Geometry.PolygonMsg();
         }
 
-        public SolidPrimitiveMsg(byte type, double[] dimensions)
+        public SolidPrimitiveMsg(byte type, double[] dimensions, Geometry.PolygonMsg polygon)
         {
             this.type = type;
             this.dimensions = dimensions;
+            this.polygon = polygon;
         }
 
         public static SolidPrimitiveMsg Deserialize(MessageDeserializer deserializer) => new SolidPrimitiveMsg(deserializer);
@@ -61,6 +51,7 @@ namespace RosMessageTypes.Shape
         {
             deserializer.Read(out this.type);
             deserializer.Read(out this.dimensions, sizeof(double), deserializer.ReadLength());
+            this.polygon = Geometry.PolygonMsg.Deserialize(deserializer);
         }
 
         public override void SerializeTo(MessageSerializer serializer)
@@ -68,13 +59,15 @@ namespace RosMessageTypes.Shape
             serializer.Write(this.type);
             serializer.WriteLength(this.dimensions);
             serializer.Write(this.dimensions);
+            serializer.Write(this.polygon);
         }
 
         public override string ToString()
         {
             return "SolidPrimitiveMsg: " +
             "\ntype: " + type.ToString() +
-            "\ndimensions: " + System.String.Join(", ", dimensions.ToList());
+            "\ndimensions: " + System.String.Join(", ", dimensions.ToList()) +
+            "\npolygon: " + polygon.ToString();
         }
 
 #if UNITY_EDITOR
