@@ -21,6 +21,15 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/) a
 
 ### Fixed
 
+- `ROSConnection.Connect()` now ends a connection that is already running or still trying, so
+  that calling it with another address changes the address. Before, the earlier connection
+  thread lived on beside the new one, and whenever it gave up on an attempt it cleared the
+  outgoing queue and reset the registration of every topic on the new connection.
+- `ROSConnection.Disconnect()` records the end of the connection itself (the outgoing queue is
+  cleared and the topics are told in the next `Update()`), and `HasConnectionError` is true
+  afterwards. A cancelled connection thread and its reader no longer touch the queue, the
+  topics or the error flag, however late they notice the cancellation.
+
 
 ## [0.7.1] - 2026-08-24
 
