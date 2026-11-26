@@ -571,22 +571,38 @@ namespace Unity.Robotics.ROSTCPConnector
 
         public void Connect()
         {
+            // One connection thread at a time: a second one would share the outgoing queue and
+            // the topics with the first. Connecting while connected (or while still trying) is
+            // how the address is changed.
+            Disconnect();
+
             if (!IPFormatIsCorrect(RosIPAddress))
                 Debug.LogWarning("Invalid ROS IP address: " + RosIPAddress);
 
+            // Nothing has answered at this address yet.
+            m_HasConnectionError = true;
             m_ConnectionThreadCancellation = new CancellationTokenSource();
 
+            // Read here, not inside the task: by the time the task runs, a later Connect() or
+            // Disconnect() may have replaced the address and the cancellation source.
+            string ipAddress = RosIPAddress;
+            int port = RosPort;
+            float networkTimeoutSeconds = m_NetworkTimeoutSeconds;
+            float keepaliveTime = m_KeepaliveTime;
+            int sleepMilliseconds = (int)(m_SleepTimeSeconds * 1000.0f);
+            CancellationToken token = m_ConnectionThreadCancellation.Token;
+
             Task.Run(() => ConnectionThread(
-                RosIPAddress,
-                RosPort,
-                m_NetworkTimeoutSeconds,
-                m_KeepaliveTime,
-                (int)(m_SleepTimeSeconds * 1000.0f),
+                ipAddress,
+                port,
+                networkTimeoutSeconds,
+                keepaliveTime,
+                sleepMilliseconds,
                 OnConnectionStartedCallback,
                 OnConnectionLostCallback,
                 m_OutgoingMessageQueue,
                 m_IncomingMessages,
-                m_ConnectionThreadCancellation.Token
+                token
             ));
         }
 
@@ -606,10 +622,23 @@ namespace Unity.Robotics.ROSTCPConnector
 
         public void Disconnect()
         {
-            m_ConnectionThreadCancellation?.Cancel();
+            if (m_ConnectionThreadCancellation == null)
+                return;
+
+            m_ConnectionThreadCancellation.Cancel();
             //The thread may be waiting on a ManualResetEvent, if so, this will wake it so it can exit immediately.
             m_OutgoingMessageQueue?.NewMessageReadyToSendEvent?.Set();
             m_ConnectionThreadCancellation = null;
+
+            // The end of the connection is recorded here and not by the cancelled thread. That
+            // thread may take a long time to notice (it can be blocked connecting to an address
+            // that does not answer), and by then the queue and the topics may serve the next
+            // connection: clearing them at that point loses what the new connection was told.
+            // The lost event is handled in Update(), like one from the thread.
+            if (m_OutgoingMessageQueue != null)
+                ClearMessageQueue(m_OutgoingMessageQueue);
+            OnConnectionLostCallback();
+            m_HasConnectionError = true;
         }
 
         void OnValidate()
@@ -938,6 +967,10 @@ namespace Unity.Robotics.ROSTCPConnector
 
                     client = new TcpClient();
                     client.Connect(rosIPAddress, rosPort);
+                    // The connect blocks for as long as the address takes to answer or to be
+                    // given up on. If the connection was cancelled meanwhile, this socket is
+                    // not the connection any more.
+                    token.ThrowIfCancellationRequested();
 
                     NetworkStream networkStream = client.GetStream();
                     networkStream.ReadTimeout = (int)(networkTimeoutSeconds * 1000);
@@ -945,7 +978,9 @@ namespace Unity.Robotics.ROSTCPConnector
                     SendKeepalive(networkStream);
                     OnConnectionStartedCallback(networkStream);
 
-                    readerCancellation = new CancellationTokenSource();
+                    // Linked, so that the reader stops with the connection and not only when
+                    // this thread gets as far as its finally block.
+                    readerCancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
                     _ = Task.Run(() => ReaderThread(nextReaderIdx, networkStream, incomingQueue, sleepMilliseconds, readerCancellation.Token));
                     nextReaderIdx++;
 
@@ -1000,9 +1035,20 @@ namespace Unity.Robotics.ROSTCPConnector
                 }
                 catch (Exception e)
                 {
-                    ROSConnection.m_HasConnectionError = true;
-                    Debug.Log($"Connection to {rosIPAddress}:{rosPort} failed - " + e);
-                    await Task.Delay(nextReconnectionDelay);
+                    // A cancelled thread reports nothing: the error flag belongs to whichever
+                    // connection replaced it.
+                    if (!token.IsCancellationRequested)
+                    {
+                        ROSConnection.m_HasConnectionError = true;
+                        Debug.Log($"Connection to {rosIPAddress}:{rosPort} failed - " + e);
+                        try
+                        {
+                            await Task.Delay(nextReconnectionDelay, token);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                        }
+                    }
                 }
                 finally
                 {
@@ -1012,9 +1058,14 @@ namespace Unity.Robotics.ROSTCPConnector
                     if (client != null)
                         client.Close();
 
-                    // clear the message queue
-                    ClearMessageQueue(outgoingQueue);
-                    DeregisterAll();
+                    // A connection that ended by itself clears the queue and tells the topics.
+                    // For a cancelled one Disconnect() has done both, and the queue and the
+                    // topics may already belong to the next connection.
+                    if (!token.IsCancellationRequested)
+                    {
+                        ClearMessageQueue(outgoingQueue);
+                        DeregisterAll();
+                    }
                 }
                 await Task.Yield();
             }
@@ -1023,7 +1074,20 @@ namespace Unity.Robotics.ROSTCPConnector
         static async Task ReaderThread(int readerIdx, NetworkStream networkStream, ConcurrentQueue<Tuple<string, byte[]>> queue, int sleepMilliseconds, CancellationToken token)
         {
             // First message should be the handshake
-            Tuple<string, byte[]> handshakeContent = await ReadMessageContents(networkStream, sleepMilliseconds, token);
+            // Once cancelled, a reader says nothing more: the error flag and the incoming queue
+            // are shared with the connection that follows it.
+            Tuple<string, byte[]> handshakeContent;
+            try
+            {
+                handshakeContent = await ReadMessageContents(networkStream, sleepMilliseconds, token);
+            }
+            catch (Exception) when (token.IsCancellationRequested)
+            {
+                return;
+            }
+            if (token.IsCancellationRequested)
+                return;
+
             if (handshakeContent.Item1 == SysCommand.k_SysCommand_Handshake)
             {
                 ROSConnection.m_HasConnectionError = false;
@@ -1039,6 +1103,8 @@ namespace Unity.Robotics.ROSTCPConnector
                 try
                 {
                     Tuple<string, byte[]> content = await ReadMessageContents(networkStream, sleepMilliseconds, token);
+                    if (token.IsCancellationRequested)
+                        break;
                     ROSConnection.m_HasConnectionError = false;
 
                     if (content.Item1 != "") // ignore keepalive messages
@@ -1049,6 +1115,9 @@ namespace Unity.Robotics.ROSTCPConnector
                 }
                 catch (Exception e)
                 {
+                    // The stream is closed under a reader whose connection has ended.
+                    if (token.IsCancellationRequested)
+                        break;
                     ROSConnection.m_HasConnectionError = true;
                     Debug.Log("Reader " + readerIdx + " exception! " + e);
                 }
